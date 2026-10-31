@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Для Ф.</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #070a1f; touch-action: none; }
+  body { background: radial-gradient(ellipse at 70% 15%, #2a2a5e 0%, #0d1033 45%, #05061a 100%); font-family: system-ui, sans-serif; }
+  canvas { display: block; width: 100%; height: 100%; cursor: grab; }
+  canvas:active { cursor: grabbing; }
+  #hint { position: fixed; left: 0; right: 0; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); text-align: center;
+          color: #cfd6ff; opacity: .7; font-size: 14px; letter-spacing: .04em; pointer-events: none; transition: opacity 1.5s; }
+  #title { position: fixed; left: 0; right: 0; top: calc(20px + env(safe-area-inset-top, 0px)); text-align: center;
+           color: #ffe3a3; font-size: 18px; letter-spacing: .06em; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="title">Я тебя люблю — на всех языках мира</div>
+<div id="hint">Вращай галактику пальцем или мышью · щипок / колесо — приблизить</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ---------- Фразы ----------
+const PHRASES = [
+"Я тебя люблю","I love you","Je t’aime","Te amo","Ich liebe dich","Ti amo","我爱你","愛してる","사랑해","أحبك",
+"Σ’ αγαπώ","Kocham cię","Miluji tě","Szeretlek","Seni seviyorum","Jag älskar dig","Jeg elsker deg","Rakastan sinua",
+"Ik hou van je","Eu te amo","Te iubesc","Я тебе кохаю","Я цябе кахаю","Mīlu tevi","Aš tave myliu","Armastan sind",
+"Volim te","Обичам те","Ljubim te","Ľúbim ťa","Mahal kita","Aku cinta kamu","Saya cintakan awak","Anh yêu em",
+"ฉันรักเธอ","मैं तुमसे प्यार करता हूँ","আমি তোমাকে ভালোবাসি","உன்னை காதலிக்கிறேன்","నేను నిన్ను ప్రేమిస్తున్నాను",
+"ਮੈਂ ਤੈਨੂੰ ਪਿਆਰ ਕਰਦਾ ਹਾਂ","ನಾನು ನಿನ್ನನ್ನು ಪ್ರೀತಿಸುತ್ತೇನೆ","എനിക്ക് നിന്നെ ഇഷ്ടമാണ്","אני אוהב אותך","دوستت دارم",
+"میں تم سے پیار کرتا ہوں","Ndiyakuthanda","Nakupenda","Ngiyakuthanda","Ek is lief vir jou","Mo nifẹ rẹ","Ina son ka",
+"Waan ku jeclahay","Tiako ianao","Ndinokuda","Hụrụ m gị n’anya","እወድሃለሁ","Ég elska þig","Rwy’n dy garu di","Tá grá agam duit",
+"Gràdh agam ort","Te quiero","T’estimo","Maite zaitut","Quérote","Të dua","Те сакам","Seni sevaman","Мен сені сүйемін",
+"Мен сизди сүйөм","მიყვარხარ","Ես քեզ սիրում եմ","Men seni söýýärin","Би чамд хайртай","ខ្ញុំស្រលាញ់អ្នក","ຂ້ອຍຮັກເຈົ້າ",
+"ငါမင်းကို ချစ်တယ်","මම ඔබට ආදරෙයි","मी तुझ्यावर प्रेम करतो","म तिमीलाई माया गर्छु","Aloha wau iā ʻoe","Ka aroha ahau ki a koe",
+"Mi amas vin","Ik hâld fan dy","Ech hunn dech gär","Ich ha di gärn","Jeg elsker dig","Ti amu","ངས་ཁྱེད་ལ་དགའ་པོ་ཡོད།","Mən səni sevirəm",
+"Ma armastan sind","Mi piace tu"
+].filter((v,i,a)=>a.indexOf(v)===i);
+
+// ---------- Атлас с текстом ----------
+const COLS = 8, CW = 256, CH = 32, ROWS = Math.ceil(PHRASES.length / COLS);
+const atlas = document.createElement('canvas');
+atlas.width = COLS * CW; atlas.height = ROWS * CH;
+const cx = atlas.getContext('2d');
+cx.fillStyle = '#fff'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+PHRASES.forEach((t, i) => {
+  const x = (i % COLS) * CW + CW / 2, y = Math.floor(i / COLS) * CH + CH / 2;
+  let fs = 22;
+  cx.font = `600 ${fs}px "Segoe UI","Noto Sans",Arial,sans-serif`;
+  const w = cx.measureText(t).width;
+  if (w > CW - 12) { fs = Math.floor(fs * (CW - 12) / w); cx.font = `600 ${fs}px "Segoe UI","Noto Sans",Arial,sans-serif`; }
+  cx.fillText(t, x, y);
+});
+const tex = new THREE.CanvasTexture(atlas);
+tex.minFilter = THREE.LinearMipmapLinearFilter; tex.anisotropy = 4;
+
+// ---------- Сцена ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+let camDist = 24;
+const galaxy = new THREE.Group();
+scene.add(galaxy);
+
+// ---------- Галактика из фраз ----------
+const N = 5500, R = 11, ARMS = 4, TWIST = 0.55;
+const offset = new Float32Array(N * 3), cell = new Float32Array(N), size = new Float32Array(N), color = new Float32Array(N * 3);
+const cCore = new THREE.Color(1.0, 0.86, 0.6), cMid = new THREE.Color(0.75, 0.8, 1.0), cEdge = new THREE.Color(0.55, 0.62, 1.0), cPink = new THREE.Color(1.0, 0.7, 0.85);
+const tmp = new THREE.Color();
+for (let i = 0; i < N; i++) {
+  const bulge = Math.random() < 0.18;
+  let x, y, z, t;
+  if (bulge) {
+    const r = Math.pow(Math.random(), 1.6) * 2.6, a = Math.random() * 6.283, b = (Math.random() - .5) * 2;
+    x = Math.cos(a) * r; z = Math.sin(a) * r; y = b * r * 0.35; t = 0;
+  } else {
+    t = Math.pow(Math.random(), 0.8);
+    const r = 0.8 + t * R;
+    const arm = (i % ARMS) / ARMS * 6.283 + r * TWIST;
+    const spread = (0.25 + t * 1.2) * (Math.random() + Math.random() - 1);
+    x = Math.cos(arm) * r + Math.cos(arm + 1.57) * spread * 1.6 + (Math.random() - .5) * .4;
+    z = Math.sin(arm) * r + Math.sin(arm + 1.57) * spread * 1.6 + (Math.random() - .5) * .4;
+    y = (Math.random() - .5) * (0.5 - t * 0.25);
+  }
+  offset.set([x, y, z], i * 3);
+  cell[i] = Math.floor(Math.random() * PHRASES.length);
+  size[i] = (bulge ? 0.5 : 0.7 + Math.random() * 0.9) * (1 - t * 0.2);
+  tmp.copy(bulge ? cCore : cMid).lerp(cEdge, t);
+  if (Math.random() < 0.08) tmp.lerp(cPink, 0.6);
+  const k = 0.6 + Math.random() * 0.4;
+  color.set([tmp.r * k, tmp.g * k, tmp.b * k], i * 3);
+}
+const pl = new THREE.PlaneBufferGeometry(1, 1);
+const geo = new THREE.InstancedBufferGeometry();
+geo.index = pl.index; geo.setAttribute('position', pl.attributes.position); geo.setAttribute('uv', pl.attributes.uv);
+geo.setAttribute('offset', new THREE.InstancedBufferAttribute(offset, 3));
+geo.setAttribute('cell', new THREE.InstancedBufferAttribute(cell, 1));
+geo.setAttribute('size', new THREE.InstancedBufferAttribute(size, 1));
+geo.setAttribute('icolor', new THREE.InstancedBufferAttribute(color, 3));
+geo.instanceCount = N;
+
+const mat = new THREE.ShaderMaterial({
+  uniforms: { map: { value: tex }, grid: { value: new THREE.Vector2(COLS, ROWS) } },
+  vertexShader: `
+    attribute vec3 offset; attribute float cell; attribute float size; attribute vec3 icolor;
+    uniform vec2 grid; varying vec2 vUv; varying vec3 vColor;
+    void main() {
+      float col = mod(cell, grid.x), row = floor(cell / grid.x);
+      vUv = vec2((col + uv.x) / grid.x, 1.0 - (row + 1.0 - uv.y) / grid.y);
+      vColor = icolor;
+      vec4 mv = modelViewMatrix * vec4(offset, 1.0);
+      mv.xy += position.xy * vec2(size, size / 8.0);
+      gl_Position = projectionMatrix * mv;
+    }`,
+  fragmentShader: `
+    uniform sampler2D map; varying vec2 vUv; varying vec3 vColor;
+    void main() {
+      float a = texture2D(map, vUv).a;
+      gl_FragColor = vec4(vColor * 1.25, a * 0.95);
+    }`,
+  transparent: true, depthWrite: false, blending: THREE.AdditiveBlending
+});
+const mesh = new THREE.Mesh(geo, mat);
+mesh.frustumCulled = false;
+galaxy.add(mesh);
+
+// Светящееся ядро
+const glowC = document.createElement('canvas'); glowC.width = glowC.height = 128;
+const g = glowC.getContext('2d'), gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+gr.addColorStop(0, 'rgba(255,240,205,1)'); gr.addColorStop(.25, 'rgba(255,215,150,.45)'); gr.addColorStop(1, 'rgba(255,200,120,0)');
+g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(glowC), blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
+glow.scale.set(6, 6, 1); galaxy.add(glow);
+
+// Фоновые звёзды
+const SN = 900, sp = new Float32Array(SN * 3);
+for (let i = 0; i < SN; i++) {
+  const r = 60 + Math.random() * 60, th = Math.random() * 6.283, ph = Math.acos(2 * Math.random() - 1);
+  sp.set([r * Math.sin(ph) * Math.cos(th), r * Math.cos(ph), r * Math.sin(ph) * Math.sin(th)], i * 3);
+}
+const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
+scene.add(new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xcfd8ff, size: 0.45, sizeAttenuation: true, transparent: true, opacity: .8, depthWrite: false })));
+
+// ---------- Управление ----------
+let rotY = 0, rotX = 1.0, velY = 0.0015, velX = 0, dragging = false;
+const pointers = new Map(); let pinchD = 0;
+const el = renderer.domElement;
+el.addEventListener('pointerdown', e => { el.setPointerCapture(e.pointerId); pointers.set(e.pointerId, [e.clientX, e.clientY]); dragging = true; velX = velY = 0; hideHint(); });
+el.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  const p = pointers.get(e.pointerId);
+  if (pointers.size === 2) {
+    pointers.set(e.pointerId, [e.clientX, e.clientY]);
+    const [a, b] = [...pointers.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    if (pinchD) camDist = clamp(camDist * pinchD / d, 6, 40);
+    pinchD = d; return;
+  }
+  const dx = e.clientX - p[0], dy = e.clientY - p[1];
+  rotY += dx * 0.006; rotX = clamp(rotX + dy * 0.006, -0.2, 1.7);
+  velY = dx * 0.006; velX = dy * 0.006;
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+});
+const up = e => { pointers.delete(e.pointerId); pinchD = 0; if (!pointers.size) dragging = false; };
+el.addEventListener('pointerup', up); el.addEventListener('pointercancel', up);
+el.addEventListener('wheel', e => { e.preventDefault(); camDist = clamp(camDist * (1 + e.deltaY * 0.001), 6, 40); }, { passive: false });
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function hideHint() { document.getElementById('hint').style.opacity = 0; }
+setTimeout(hideHint, 8000);
+
+// ---------- Цикл ----------
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
+  if (w < h) camDist = Math.max(camDist, 24 * (h / w) * 0.55 + 8);
+}
+addEventListener('resize', resize); resize();
+
+function loop() {
+  requestAnimationFrame(loop);
+  if (!dragging) {
+    rotY += velY; rotX = clamp(rotX + velX, -0.2, 1.7);
+    velY += (0.0015 - velY) * 0.02; velX *= 0.95;
+  }
+  galaxy.rotation.set(rotX, rotY, 0, 'XYZ');
+  galaxy.rotation.order = 'XYZ';
+  camera.position.set(0, 0, camDist);
+  renderer.render(scene, camera);
+}
+loop();
+</script>
+</body>
+</html>
